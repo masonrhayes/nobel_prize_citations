@@ -39,4 +39,5 @@ vignettes/*.pdf
 .Renviron
 
 # Custom
+
 *.xlsx
