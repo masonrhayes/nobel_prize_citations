@@ -2,87 +2,33 @@ library(tidyverse)
 library(zoo)
 library(ggthemes)
 
-medicine = read_csv("data/dataverse_files/medicine_publication_record.csv") %>%
+# See "functions.R" to see how each function is written
+
+nobel_medicine = read_csv("data/dataverse_files/medicine_publication_record.csv") %>%
   setNames(., c("laureate_id", "laureate_name", "prize_year", "title",
                 "pub_year", "paper_id", "target_doi", "journal", "affiliation",
                 "is_prize_winning")) %>% 
   mutate(field = "medicine")
 
 
-postgres = read_csv("data/scite_data/scite_nobel_medicine.csv")
+scite_medicine = read_csv("data/scite_data/scite_nobel_medicine.csv")
 
-nobel = left_join(postgres, medicine, by = "target_doi") %>%
-  mutate(years_since_prize = source_year - prize_year) %>%
-  group_by(target_doi) %>%
-  mutate(supporting_cites = sum(type == "supporting"),
-         contrasting_cites = sum(type == "contradicting"),
-         mentioning_cites = sum(type == "mentioning")) %>%
-  ungroup() %>%
-  group_by(prize_year, years_since_prize) %>%
-  mutate(supporting_in_year = sum(type == "supporting"),
-         contrasting_in_year = sum(type == "contradicting"),
-         mentioning_in_year = sum(type == "mentioning")) %>%
-  ungroup()
+# Combine data from scite and from nobel prize publication records -----
 
-# Aggregate all the data for all prize years, instead of separating
-aggregate_data = nobel %>% 
-  group_by(years_since_prize) %>% 
-  mutate(supporting_in_year = sum(type == "supporting"),
-         contrasting_in_year = sum(type == "contradicting"),
-         mentioning_in_year = sum(type == "mentioning")) %>% 
-  ungroup() %>% 
-  arrange(years_since_prize) %>% 
-  filter(!duplicated(years_since_prize)) %>% 
-  mutate(prev_year = lag(years_since_prize, order_by = years_since_prize)) %>% ungroup() %>%
-  filter(supporting_in_year + contrasting_in_year >= 100) %>% 
-  select(years_since_prize, prev_year,
-         supporting_in_year, contrasting_in_year, mentioning_in_year) %>% 
-  mutate(two_year_si = NA) %>% 
-  mutate(two_year_si = ifelse(
-    years_since_prize <= prev_year + 2,
-    (supporting_in_year + lag(supporting_in_year,default=0))/(supporting_in_year + lag(supporting_in_year,default=0) + contrasting_in_year + lag(contrasting_in_year,default=0)), 
-  ))
+nobel_data = scite_join(scite_medicine, medicine)
 
-view(aggregate_data)
+# Aggregate all the data for all prize years, instead of separating --------
 
+scite_summary_all = nobel_data %>% 
+  scite_summarize_all(2007)
 
-# Check
-glimpse(nobel)
+glimpse(aggregate_data)
 
-# Define function to calculate Two Year scite Index (SI) ------------
-si_calc = function(df){
-  df %>% 
-    mutate(two_year_si = ifelse(
-      years_since_prize <= prev_year + 2,
-      (supporting_in_year + lag(supporting_in_year,default=0))/(supporting_in_year + lag(supporting_in_year,default=0) + contrasting_in_year + lag(contrasting_in_year,default=0)), 
-    ))
-}
+# Group by prize year, then find citation statement tallies by years since prize -------
+scite_summary = nobel_data %>% 
+  scite_summarize()
 
-# New data frame ---------
-# 
-# After calculating cites in each year and normalizing dates, we no longer need unique years_since_prize. So group by prize year, drop duplicate years_since_prize; and then add variable called prev_year which is a one-year lag of years_since_prize.
-# 
-# Next, select only obs where there are >=10 supporting + contrasting, select relevant variables, create new var two_year_si, and then group by prize year and nest the data frame.
-# 
-# Finally, map the function to calculate two year SI, select prize_year and two_year_si, and then unnest it all.
-
-df = nobel %>% 
-  group_by(prize_year) %>%
-  arrange(years_since_prize) %>% 
-  filter(!duplicated(years_since_prize)) %>% 
-  mutate(prev_year = lag(years_since_prize, order_by = years_since_prize)) %>% ungroup() %>%
-  filter(supporting_in_year + contrasting_in_year >= 10) %>% 
-  select(prize_year, years_since_prize, prev_year,
-         supporting_in_year, contrasting_in_year, mentioning_in_year) %>% 
-  mutate(two_year_si = NA) %>% 
-  group_by(prize_year) %>% 
-  nest()%>% # nesting the df to map si_calc function to each prize_year
-  mutate(two_year_si = map(data, si_calc)) %>% 
-  select(prize_year, two_year_si) %>% 
-  unnest()
-
-
-view(df)
+glimpse(scite_summary)
 
 
 ## Building graph ---------
@@ -91,12 +37,12 @@ view(df)
 
 variable = "Two Year SI"
 
-df %>%
+scite_summary %>%
   filter(
     between(years_since_prize, -9, 10)
   ) %>% 
   filter(
-    between(prize_year, 1980,2000)
+    between(prize_year, 1992, 2000)
   ) %>% 
   filter(!is.na(two_year_si)) %>% 
   ggplot(aes(years_since_prize, two_year_si)) +
@@ -104,21 +50,20 @@ df %>%
   geom_smooth(se = FALSE) +
   theme_minimal() +
   geom_vline(xintercept = 0) +
-  geom_hline(yintercept = 0)+
   facet_wrap(~prize_year)+
-  labs(title = str_interp("${variable} by years since Nobel Prize in Chemistry was awarded"), y = str_interp("${variable}"), x = "Years Since Prize") 
+  labs(title = str_interp("${variable} by years since Nobel Prize in Medicine was awarded"), y = str_interp("${variable}"), x = "Years Since Prize") 
 
 
 # Aggregate graph -----------
 
-variable = "Two Year SI"
+variable = "Contrasting Citation Statements"
 
-aggregate_data %>%
+scite_summary_all %>%
   filter(
-    between(years_since_prize, -30, 30)
+    between(years_since_prize, -8, 8)
   ) %>% 
   filter(!is.na(two_year_si)) %>% 
-  ggplot(aes(years_since_prize, two_year_si)) +
+  ggplot(aes(years_since_prize, contrasting_in_year)) +
   geom_line() +
   geom_smooth(se = FALSE) +
   theme_minimal() +
@@ -131,14 +76,14 @@ aggregate_data %>%
 ## Testing stats ---------
 ## Define group before vs after nobel prize: since it's announced in October, year 0 still is considered "after" the prize
 
-df = df %>% 
+scite_summary = scite_summary %>% 
   mutate(group = ifelse(years_since_prize >=0, "after_prize", "before_prize")) %>%
   mutate(arbitrary_cutoff = ifelse(years_since_prize > -3, "after", "before")) %>% 
   mutate(group = as.factor(group)) %>% 
   mutate(arbitrary_cutoff = as.factor(arbitrary_cutoff))
 
 
-aggregate_data = aggregate_data %>% 
+scite_summary_all = scite_summary_all %>% 
   mutate(group = ifelse(years_since_prize >=0, "after_prize", "before_prize")) %>%
   mutate(arbitrary_cutoff = ifelse(years_since_prize > -3, "after", "before")) %>% 
   mutate(group = as.factor(group)) %>% 
@@ -152,7 +97,7 @@ years_after = 2; years_before = -years_after - 1
 
 years_before:years_after
 
-stats = df %>% 
+stats = scite_summary %>% 
   filter(
     between(years_since_prize, years_before, years_after)
   ) %>% 
