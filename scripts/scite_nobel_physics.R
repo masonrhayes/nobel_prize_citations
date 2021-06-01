@@ -1,67 +1,47 @@
-library(tidyverse)
-library(zoo)
-library(ggthemes)
-library(pracma)
+source("scripts/functions.R")
 
-physics = read_csv("data/dataverse_files/physics_publication_record.csv") %>%
+nobel_physics = read_csv("data/dataverse_files/physics_publication_record.csv") %>%
   setNames(., c("laureate_id", "laureate_name", "prize_year", "title",
                 "pub_year", "paper_id", "target_doi", "journal", "affiliation",
                 "is_prize_winning")) %>% 
   mutate(field = "physics")
 
 
-postgres = read_csv("data/scite_data/scite_nobel_physics.csv")
+scite_physics = read_csv("data/scite_data/scite_nobel_physics.csv")
 
-nobel = left_join(postgres, physics, by = "target_doi") %>%
-  mutate(years_since_prize = source_year - prize_year) %>%
-  group_by(target_doi) %>%
-  mutate(supporting_cites = sum(type == "supporting"),
-         contrasting_cites = sum(type == "contradicting"),
-         mentioning_cites = sum(type == "mentioning")) %>%
-  ungroup() %>%
-  group_by(prize_year, years_since_prize) %>%
-  mutate(supporting_in_year = sum(type == "supporting"),
-         contrasting_in_year = sum(type == "contradicting"),
-         mentioning_in_year = sum(type == "mentioning")) %>%
-  ungroup()
+physics_nobel_data = scite_join(scite_physics, nobel_physics)
 
-# Check
-glimpse(nobel)
-
-# Define function to calculate Two Year scite Index (SI) ------------
-si_calc = function(df){
-  df %>% 
-    mutate(two_year_si = ifelse(
-      years_since_prize <= prev_year + 2,
-      (supporting_in_year + lag(supporting_in_year,default=0))/(supporting_in_year + lag(supporting_in_year,default=0) + contrasting_in_year + lag(contrasting_in_year,default=0)), 
-    ))
-}
-
-# New data frame ---------
-# 
-# After calculating cites in each year and normalizing dates, we no longer need unique years_since_prize. So group by prize year, drop duplicate years_since_prize; and then add variable called prev_year which is a one-year lag of years_since_prize.
-# 
-# Next, select only obs where there are >=10 supporting + contrasting, select relevant variables, create new var two_year_si, and then group by prize year and nest the data frame.
-# 
-# Finally, map the function to calculate two year SI, select prize_year and two_year_si, and then unnest it all.
-
-df = nobel %>% 
-  group_by(prize_year) %>%
-  arrange(years_since_prize) %>% 
-  filter(!duplicated(years_since_prize)) %>% 
-  mutate(prev_year = lag(years_since_prize, order_by = years_since_prize)) %>% ungroup() %>%
-  filter(supporting_in_year + contrasting_in_year >= 10) %>% 
-  select(prize_year, years_since_prize, prev_year,
-         supporting_in_year, contrasting_in_year, mentioning_in_year) %>% 
-  mutate(two_year_si = NA) %>% 
-  group_by(prize_year) %>% 
-  nest()%>% # nesting the df to map si_calc function to each prize_year
-  mutate(two_year_si = map(data, si_calc)) %>% 
-  select(prize_year, two_year_si) %>% 
-  unnest()
+phys_summary = physics_nobel_data %>% 
+  scite_summarize()
 
 
-view(df)
+phys_summary_all = physics_nobel_data %>% 
+  scite_summarize_all(max_pub_year = 2008,
+                      max_prize_year = 2008)
+
+field = "Physics"
+date_range = c(-10,10)
+
+
+# Supporting ---------
+
+phys_summary_all %>% 
+  scite_plot(field, "Supporting",
+             "supporting_in_year", date_range)
+
+# Contrasting ---------
+
+phys_summary_all %>% 
+  scite_plot(field, "Contrasting", 
+             "contrasting_in_year", date_range)
+
+
+# Mentioning -----
+
+phys_summary_all %>% 
+  scite_plot(field, "Mentioning",
+             "mentioning_in_year", date_range)
+
 
 
 ## Building graph ---------
@@ -86,6 +66,16 @@ df %>%
   geom_hline(yintercept = 0)+
   facet_wrap(~prize_year)+
   labs(title = str_interp("${variable} by years since Nobel Prize in Physics was awarded"), y = str_interp("${variable}"), x = "Years Since Prize") 
+
+
+
+
+
+
+# Aggregate data ---------
+
+phys_summary_all = physics_data %>% 
+  
 
 
 ## Testing stats ---------

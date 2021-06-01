@@ -1,8 +1,7 @@
-library(tidyverse)
-library(zoo)
-library(ggthemes)
+# Run "functions.R" to load necessary packages and to define necessary functions
 
-# See "functions.R" to see how each function is written
+source("scripts/functions.R")
+
 
 nobel_medicine = read_csv("data/dataverse_files/medicine_publication_record.csv") %>%
   setNames(., c("laureate_id", "laureate_name", "prize_year", "title",
@@ -15,20 +14,22 @@ scite_medicine = read_csv("data/scite_data/scite_nobel_medicine.csv")
 
 # Combine data from scite and from nobel prize publication records -----
 
-nobel_data = scite_join(scite_medicine, medicine)
+med_nobel_data = scite_join(scite_medicine, nobel_medicine)
+
 
 # Aggregate all the data for all prize years, instead of separating --------
 
-scite_summary_all = nobel_data %>% 
-  scite_summarize_all(2007)
+med_summary_all = med_nobel_data %>% 
+  scite_summarize_all(max_pub_year = 2008,
+                      max_prize_year = 2008)
 
-glimpse(aggregate_data)
+glimpse(med_summary_all)
 
 # Group by prize year, then find citation statement tallies by years since prize -------
-scite_summary = nobel_data %>% 
+med_summary = med_nobel_data %>% 
   scite_summarize()
 
-glimpse(scite_summary)
+glimpse(med_summary)
 
 
 ## Building graph ---------
@@ -37,12 +38,12 @@ glimpse(scite_summary)
 
 variable = "Two Year SI"
 
-scite_summary %>%
+med_summary %>%
   filter(
     between(years_since_prize, -9, 10)
   ) %>% 
   filter(
-    between(prize_year, 1992, 2000)
+    between(prize_year, 2000, 2008)
   ) %>% 
   filter(!is.na(two_year_si)) %>% 
   ggplot(aes(years_since_prize, two_year_si)) +
@@ -55,37 +56,52 @@ scite_summary %>%
 
 
 # Aggregate graph -----------
+field = "Medicine"
+date_range = c(-10,10) # is the default, can be changed
 
-variable = "Contrasting Citation Statements"
+# supporting citation statement rate -----------
 
-scite_summary_all %>%
-  filter(
-    between(years_since_prize, -8, 8)
-  ) %>% 
-  filter(!is.na(two_year_si)) %>% 
-  ggplot(aes(years_since_prize, contrasting_in_year)) +
-  geom_line() +
-  geom_smooth(se = FALSE) +
-  theme_minimal() +
-  geom_vline(xintercept = 0) +
-  labs(title = str_interp("${variable} by years since Nobel Prize in Medicine was awarded"), y = str_interp("${variable}"), x = "Years Since Prize")
+med_summary_all %>% 
+  scite_plot(field, "Supporting", 
+             "supporting_in_year")+
+  ylim(0,0.20)
+
+### Contrasting ----------
+
+med_summary_all %>% 
+  scite_plot(field, "Contrasting",
+             "contrasting_in_year") +
+  ylim(0,0.02)
+
+## Mentioning ------
 
 
+med_summary_all %>% 
+  scite_plot(field, "Mentioning", "mentioning_in_year")+
+  ylim(0,3)
+
+## scite Index --------
+
+variable = "Two Year SI"
+
+med_summary_all %>% 
+  scite_index_plot(field) +
+  ylim(0.85,1)
 
 
 ## Testing stats ---------
 ## Define group before vs after nobel prize: since it's announced in October, year 0 still is considered "after" the prize
 
-scite_summary = scite_summary %>% 
+med_summary = med_summary %>% 
   mutate(group = ifelse(years_since_prize >=0, "after_prize", "before_prize")) %>%
-  mutate(arbitrary_cutoff = ifelse(years_since_prize > -3, "after", "before")) %>% 
+  mutate(arbitrary_cutoff = ifelse(years_since_prize >= -3, "after_arbirary", "before_arbitrary")) %>% 
   mutate(group = as.factor(group)) %>% 
   mutate(arbitrary_cutoff = as.factor(arbitrary_cutoff))
 
 
-scite_summary_all = scite_summary_all %>% 
+med_summary_all = med_summary_all %>% 
   mutate(group = ifelse(years_since_prize >=0, "after_prize", "before_prize")) %>%
-  mutate(arbitrary_cutoff = ifelse(years_since_prize > -3, "after", "before")) %>% 
+  mutate(arbitrary_cutoff = ifelse(years_since_prize >= -3, "after_arbitrary", "before_arbitrary")) %>% 
   mutate(group = as.factor(group)) %>% 
   mutate(arbitrary_cutoff = as.factor(arbitrary_cutoff))
 
@@ -97,7 +113,7 @@ years_after = 2; years_before = -years_after - 1
 
 years_before:years_after
 
-stats = scite_summary %>% 
+stats = med_summary %>% 
   filter(
     between(years_since_prize, years_before, years_after)
   ) %>% 
@@ -130,18 +146,17 @@ view(stats)
 
 ## (re)define year range -----------
 
-years_after = 3; years_before = -years_after - 1
+years_after = 3; years_before = -years_after-1
 
 # Check that the range is balanced. Year 0 belongs to "after", since Nobel prize is awarded 10 December each year, but it is announce in October
 
 years_before:years_after
 
-stats_aggregate = aggregate_data %>% 
+stats_aggregate = med_summary_all %>% 
   filter(
     between(years_since_prize, years_before, years_after)
   ) %>% 
-  group_by(group) %>% 
-  mutate(total_cites_in_year = supporting_in_year + mentioning_in_year + contrasting_in_year) %>% 
+  group_by(group) %>%
   summarize(
     across(ends_with("in_year"), list(mean = mean, sum = sum)),
     count = n())
@@ -161,7 +176,7 @@ stats_aggregate %>%
 
 ## Check simple linear model ----------------
 
-aggregate_data %>% 
+med_summary_all %>% 
   mutate(ltysi = log(two_year_si)) %>% 
   group_by(group) %>% 
   mutate(total_cites_in_year = supporting_in_year + mentioning_in_year + contrasting_in_year) %>% 
